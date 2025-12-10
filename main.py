@@ -319,6 +319,9 @@ def load_config():
     config["SLACK_WEBHOOK_URL"] = os.environ.get("SLACK_WEBHOOK_URL", "").strip() or webhooks.get(
         "slack_webhook_url", ""
     )
+    
+    # 网页 URL 配置（用于 Bark 推送重定向）
+    config["WEB_URL"] = os.environ.get("WEB_URL", "").strip() or config_data.get("app", {}).get("web_url", "")
 
     # 输出配置来源信息
     notification_sources = []
@@ -4727,14 +4730,25 @@ def send_to_bark(
             )
 
         # 构建JSON payload
+        # 只在最后一批添加 URL 重定向，避免重复跳转
+        # 支持通过环境变量或配置文件设置网页 URL
+        web_url_env = os.environ.get("WEB_URL", "").strip()
+        web_url_config = CONFIG.get("WEB_URL", "")
+        web_url = (web_url_env or web_url_config or "https://et-1.github.io/NewsTrend/") if idx == total_batches else None
+        
         payload = {
             "title": report_type,
             "markdown": batch_content,
             "device_key": device_key,
             "sound": "default",
             "group": "TrendRadar",
-            "action": "none",  # 点击推送跳到 APP 不弹出弹框,方便阅读
         }
+        
+        # 添加 URL 重定向（只在最后一批）
+        if web_url:
+            payload["url"] = web_url
+        else:
+            payload["action"] = "none"  # 其他批次不跳转，方便阅读
 
         try:
             response = requests.post(
@@ -5239,17 +5253,50 @@ class NewsAnalyzer:
             if not output_dir.exists():
                 return
 
-            # 获取昨天的日期
-            yesterday = get_beijing_time() - timedelta(days=1)
+            import shutil
+            beijing_now = get_beijing_time()
+            yesterday = beijing_now - timedelta(days=1)
             yesterday_folder = yesterday.strftime("%Y年%m月%d日")
             yesterday_path = output_dir / yesterday_folder
 
+            # 清理昨天的文件夹
             if yesterday_path.exists() and yesterday_path.is_dir():
-                import shutil
-                shutil.rmtree(yesterday_path)
-                print(f"✅ 已清理昨天的缓存: {yesterday_folder}")
+                try:
+                    shutil.rmtree(yesterday_path)
+                    print(f"✅ 已清理昨天的缓存: {yesterday_folder}")
+                except Exception as e:
+                    print(f"⚠️ 删除 {yesterday_folder} 时出错: {e}")
             else:
                 print(f"昨天的缓存不存在或已清理: {yesterday_folder}")
+
+            # 清理更早的文件夹（保留最近7天的数据）
+            retention_days = 7
+            cutoff_date = beijing_now - timedelta(days=retention_days)
+            
+            cleaned_count = 0
+            for item in output_dir.iterdir():
+                if item.is_dir() and item.name != ".push_records":
+                    # 尝试解析日期文件夹名称（格式：YYYY年MM月DD日）
+                    try:
+                        # 移除"年"、"月"、"日"字符，提取日期
+                        date_str = item.name.replace("年", "-").replace("月", "-").replace("日", "")
+                        folder_date = datetime.strptime(date_str, "%Y-%m-%d")
+                        folder_date = pytz.timezone("Asia/Shanghai").localize(folder_date)
+                        
+                        # 如果文件夹日期早于保留期限，则删除
+                        if folder_date.date() < cutoff_date.date():
+                            try:
+                                shutil.rmtree(item)
+                                print(f"✅ 已清理过期缓存: {item.name}")
+                                cleaned_count += 1
+                            except Exception as e:
+                                print(f"⚠️ 删除 {item.name} 时出错: {e}")
+                    except (ValueError, AttributeError):
+                        # 如果无法解析日期，跳过（可能是其他类型的文件夹）
+                        continue
+            
+            if cleaned_count > 0:
+                print(f"✅ 共清理了 {cleaned_count} 个过期缓存文件夹")
         except Exception as e:
             print(f"⚠️ 清理旧缓存时出错: {e}")
 
