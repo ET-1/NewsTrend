@@ -11,7 +11,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
 from email.utils import formataddr, formatdate, make_msgid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Union
 
@@ -5232,10 +5232,34 @@ class NewsAnalyzer:
         print(f"{summary_type}HTML已生成: {html_file}")
         return html_file
 
+    def _cleanup_old_cache(self) -> None:
+        """清理昨天的新闻缓存"""
+        try:
+            output_dir = Path("output")
+            if not output_dir.exists():
+                return
+
+            # 获取昨天的日期
+            yesterday = get_beijing_time() - timedelta(days=1)
+            yesterday_folder = yesterday.strftime("%Y年%m月%d日")
+            yesterday_path = output_dir / yesterday_folder
+
+            if yesterday_path.exists() and yesterday_path.is_dir():
+                import shutil
+                shutil.rmtree(yesterday_path)
+                print(f"✅ 已清理昨天的缓存: {yesterday_folder}")
+            else:
+                print(f"昨天的缓存不存在或已清理: {yesterday_folder}")
+        except Exception as e:
+            print(f"⚠️ 清理旧缓存时出错: {e}")
+
     def _initialize_and_check_config(self) -> None:
         """通用初始化和配置检查"""
         now = get_beijing_time()
         print(f"当前北京时间: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # 清理昨天的缓存
+        self._cleanup_old_cache()
 
         if not CONFIG["ENABLE_CRAWLER"]:
             print("爬虫功能已禁用（ENABLE_CRAWLER=False），程序退出")
