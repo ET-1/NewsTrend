@@ -2,41 +2,33 @@ name: Get Hot News
 
 on:
   schedule:
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # ⚠️ 试用版说明 / Trial Mode
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ⏰ GitHub Actions 定时触发（仅控制程序唤醒频率）
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     #
-    # 🔄 运行机制 / How it works:
-    #    - 每个周期为 7 天，届时自动停止
-    #    - 运行 "Check In" 会重置周期（重新开始 7 天倒计时，而非累加）
-    #    - Each cycle is 7 days, then auto-stops
-    #    - "Check In" resets the cycle (restarts 7-day countdown, not cumulative)
+    # 💡 工作原理：
+    #   - GitHub Actions 的 cron 只负责「唤醒」程序
+    #   - 程序内部根据 config/timeline.yaml 决定「做什么」
+    #   - timeline.yaml 控制：什么时候推送/AI分析/用什么报告模式
     #
-    # 💡 设计初衷 / Why this design:
-    #    如果 7 天都忘了签到，或许这些资讯对你来说并非刚需
-    #    适时的暂停，能帮你从信息流中抽离，给大脑留出喘息的空间
-    #    If you forget for 7 days, maybe you don't really need it
-    #    A timely pause helps you detach from the stream and gives your mind space
+    # 🔄 推荐配置：
+    #   - 默认：每小时运行一次（如每小时第33分钟）
+    #   - 节省资源：每2-4小时运行一次
+    #   - 高频监控：每30分钟运行一次
     #
-    # 🙏 珍惜资源 / Respect shared resources:
-    #    GitHub Actions 是平台提供的公共资源，每次运行都会消耗算力
-    #    签到机制确保资源分配给真正需要的用户，感谢你的理解与配合
-    #    GitHub Actions is a shared public resource provided by the platform
-    #    Check-in ensures resources go to those who truly need it — thank you
+    # 📝 修改方法：只改第一个数字（0-59），表示每小时第几分钟
     #
-    # 🚀 长期使用请部署 Docker 版本 / For long-term use, deploy Docker version
+    # 示例：
+    #   "15 * * * *"      → 每小时第15分钟
+    #   "0 */2 * * *"     → 每2小时整点运行
+    #   "30 8-22 * * *"   → 北京时间 16:00-06:00 每小时第30分钟
     #
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ⚠️ 注意：GitHub Actions 可能有5-15分钟的随机延迟
     #
-    # 📝 修改运行时间：只改第一个数字（0-59），表示每小时第几分钟运行
-    # 📝 Change time: Only modify the first number (0-59) = minute of each hour
-    #
-    # 示例 / Examples:
-    #   "15 * * * *"     → 每小时第15分钟 / minute 15 every hour
-    #   "30 0-14 * * *"  → 北京时间 8:00-22:00 每小时第30分钟 / Beijing 8am-10pm
-    #
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     - cron: "33 * * * *"
 
+  # 支持手动触发（用于测试或立即更新）
   workflow_dispatch:
 
 concurrency:
@@ -46,8 +38,6 @@ concurrency:
 permissions:
   contents: write
   actions: write
-  pages: write
-  id-token: write
 
 jobs:
   crawl:
@@ -58,85 +48,34 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
-          clean: true
-
-      - name: Check Expiration
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          WORKFLOW_FILE="crawler.yml"
-          API_URL="repos/${{ github.repository }}/actions/workflows/$WORKFLOW_FILE/runs"
-
-          TOTAL=$(gh api "$API_URL" --jq '.total_count')
-          if [ -z "$TOTAL" ] || [ "$TOTAL" -eq 0 ]; then
-            echo "No previous runs found, skipping expiration check"
-            exit 0
-          fi
-
-          LAST_PAGE=$(( (TOTAL + 99) / 100 ))
-          FIRST_RUN_DATE=$(gh api "$API_URL?per_page=100&page=$LAST_PAGE" --jq '.workflow_runs[-1].created_at')
-
-          if [ -n "$FIRST_RUN_DATE" ]; then
-            CURRENT_TIMESTAMP=$(date +%s)
-            FIRST_RUN_TIMESTAMP=$(date -d "$FIRST_RUN_DATE" +%s)
-            DIFF_SECONDS=$((CURRENT_TIMESTAMP - FIRST_RUN_TIMESTAMP))
-            LIMIT_SECONDS=604800
-
-            if [ $DIFF_SECONDS -gt $LIMIT_SECONDS ]; then
-              echo "⚠️ 试用期已结束，请运行 'Check In' 签到续期"
-              echo "⚠️ Trial expired. Run 'Check In' to renew."
-              gh workflow disable "$WORKFLOW_FILE"
-              exit 1
-            else
-              DAYS_LEFT=$(( (LIMIT_SECONDS - DIFF_SECONDS) / 86400 ))
-              echo "✅ 试用期剩余 ${DAYS_LEFT} 天，到期前请运行 'Check In' 签到续期"
-              echo "✅ Trial: ${DAYS_LEFT} days left. Run 'Check In' before expiry to renew."
-            fi
-          fi
-
-
-      # --------------------------------------------------------------------------------
-      # 🚦 TRAFFIC CONTROL / 流量控制
-      # --------------------------------------------------------------------------------
-      # EN: Generates a random delay between 1 and 300 seconds (5 minutes).
-      #     Critical for load balancing.
-      #
-      # CN: 生成 1 到 300 秒（5分钟）之间的随机延迟。
-      #     这对负载均衡至关重要。
-      # - name: Random Delay (Traffic Control)
-      #   if: success()
-      #   run: |
-      #     echo "🎲 Traffic Control: Generating random delay..."
-      #     DELAY=$(( ( RANDOM % 300 )  + 1 ))
-      #     echo "⏸️  Sleeping for ${DELAY} seconds to spread the load..."
-      #     sleep ${DELAY}s
-      #     echo "▶️  Delay finished. Starting crawler..."
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
-        if: success()
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
           cache: "pip"
 
       - name: Install dependencies
-        if: success()
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Verify required files
-        if: success()
         run: |
           if [ ! -f config/config.yaml ]; then
-            echo "Error: Config missing"
+            echo "❌ Error: config/config.yaml not found"
+            exit 1
+          fi
+          if [ ! -f config/frequency_words.txt ]; then
+            echo "❌ Error: config/frequency_words.txt not found"
             exit 1
           fi
 
-      - name: Run crawler
-        if: success()
+      - name: Run crawler and generate report
         env:
+          # 通知渠道配置
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -153,10 +92,9 @@ jobs:
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
           BARK_URL: ${{ secrets.BARK_URL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          # 通用Webhook配置
           GENERIC_WEBHOOK_URL: ${{ secrets.GENERIC_WEBHOOK_URL }}
           GENERIC_WEBHOOK_TEMPLATE: ${{ secrets.GENERIC_WEBHOOK_TEMPLATE }}
-          # AI 配置（ai_analysis 和 ai_translation 共享模型配置）
+          # AI 配置
           AI_ANALYSIS_ENABLED: ${{ secrets.AI_ANALYSIS_ENABLED }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_MODEL: ${{ secrets.AI_MODEL }}
@@ -168,15 +106,56 @@ jobs:
           S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL }}
           S3_REGION: ${{ secrets.S3_REGION }}
           GITHUB_ACTIONS: true
-        run: python -m trendradar
+        run: |
+          echo "📡 Starting crawler..."
+          python -m trendradar
+          echo "✅ Crawler completed"
 
-      - name: Deploy to GitHub Pages
-        if: success()
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./
-          publish_branch: gh-pages
-          force_orphan: true
-          user_name: 'github-actions[bot]'
-          user_email: 'github-actions[bot]@users.noreply.github.com'
+      - name: Check if files changed
+        id: check_changes
+        run: |
+          if [ -f "index.html" ]; then
+            echo "✅ index.html generated"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ No index.html found"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push to master
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 添加生成的文件
+          git add index.html
+          git add output/ || true
+          
+          # 检查是否有变化
+          if git diff --staged --quiet; then
+            echo "📝 No changes to commit"
+          else
+            # 提交变化
+            TIMESTAMP=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')
+            git commit -m "🤖 Auto update news - ${TIMESTAMP}"
+            
+            # 推送到 master 分支
+            git push origin master
+            echo "✅ Successfully pushed to master branch"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 Workflow Summary"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          if [ -f "index.html" ]; then
+            SIZE=$(du -h index.html | cut -f1)
+            echo "✅ HTML Report: $SIZE"
+            echo "🌐 Visit: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          else
+            echo "❌ HTML Report: Not generated"
+          fi
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
