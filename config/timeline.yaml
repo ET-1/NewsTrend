@@ -226,7 +226,7 @@ presets:
       report_mode: "current"
       once:
         analyze: true              # 每个时段只分析一次
-        push: false                # 不限制推送次数 ← 修改这里
+        push: true                 # 每个时段只推送一次
 
     periods:
       morning_briefing:
@@ -258,23 +258,34 @@ presets:
         report_mode: "daily"       # 当日全部新闻汇总
         # once 继承 default（analyze: true, push: true）→ 只推/分析一次
 
-      weekend_free:
-        name: "周末自由"
-        start: "10:00"
-        end: "19:00"
+      weekend_morning:
+        name: "周末早间"
+        start: "09:00"
+        end: "12:00"
         ai_mode: "current"         # AI 分析当前榜单
-        push: true                 # 推送当前热点
-        report_mode: "current"     # 当前榜单模式：显示当前在榜新闻
+        push: true                 # 早间推送当前热点
+        report_mode: "current"     # 当前榜单模式
         once:
           analyze: false           # 不限制分析次数
-          push: false              # 不限制推送次数
+          push: true               # 只推送一次
 
-    # 工作日使用三段式推送；周末使用增量自由模式
+      weekend_evening:
+        name: "周末晚间"
+        start: "18:00"
+        end: "21:00"
+        ai_mode: "daily"           # AI 分析全天内容
+        push: true                 # 晚间推送汇总
+        report_mode: "daily"       # 全天汇总模式
+        once:
+          analyze: false           # 不限制分析次数
+          push: true               # 只推送一次
+
+    # 工作日使用三段式推送；周末使用早晚两次推送
     day_plans:
       workday:
         periods: ["morning_briefing", "noon_update", "closing_summary"]
       weekend:
-        periods: ["weekend_free"]  # 周末：有新增就推，不打扰睡眠
+        periods: ["weekend_morning", "weekend_evening"]  # 周末：早间+晚间
 
     week_map:
       1: "workday"                 # 周一 → 工作日计划
